@@ -1,7 +1,3 @@
----
-title: "**ECO395M: PS1**"
-author: "Yuhui Gu and Zihao Yin"
----
 # Problem 1
 
 Using this data set which contains information about every commercial
