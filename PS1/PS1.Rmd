@@ -1,0 +1,415 @@
+---
+title: "**ECO395M: PS1**"
+author: "Yuhui Gu and Zihao Yin"
+output: pdf_document
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE,
+                      out.width = ".8\\textwidth", 
+                      fig.align = "center",
+                      fig.pos = "H")
+library(tidyverse)
+library(mosaic)
+library(caret)
+library(ggmap)
+library(knitr)
+library(kableExtra)
+```
+
+```{r data}
+ABIA = read.csv("ABIA.csv")
+sclass = read.csv("sclass.csv") %>% select(trim, mileage, price)
+olympics_top20 = read.csv("olympics_top20.csv")
+```
+
+# Problem 1
+Using this data set which contains information about every commercial flight that either departed from or landed at Austin-Bergstrom Interational Airport (ABIA) in 2008, we examined a number of statistics with regards to flight patterns and delays of flights departing ABIA. 
+
+The graph below (Figure 1) shows the average arrival delays of every flight that departed Austin in each hour of the day. We chose to analyse arrival delays instead of departure delays because arrival delays also incorporate information about time spent in the air. From the figure, it appears that there are two peaks: at noon and around 6 in the afternoon. To minimize delay time, flying in the morning or during the late night can be a good choice.
+
+
+```{r best_time, fig.cap="Average Arrival Delays of Each Hour of the Day"}
+best_time = ABIA %>%
+  filter(Dest != "AUS") %>% 
+  mutate(Time = floor(CRSDepTime/100)+1) %>% 
+  group_by(Time) %>%
+  summarize(mean = mean(ArrDelay, na.rm=TRUE))
+
+ggplot(best_time) +
+  geom_col(aes(x=Time, y=mean)) +
+  labs(y="Average Arrival Delays (min)", x="Time (hr)") + 
+  theme_bw()
+```
+
+The times of delays do differ among carriers, however. The graph below (Figure 2) shows similar statistics as those shown in the previous graph, but for each airlines present in the data set. The patterns of delays are quite varied across the airlines: it appears that there are airlines such as US Airways, United, and Frontier that do not experience many delays at all, while there are airlines like Colorado and American that tend to experience longer delays during the day. But, in general, mornings and late nights tend to have shorter delays.
+
+```{r best_time_airline, fig.cap="Average Arrival Delays for Different Airlines"}
+best_time_airline = ABIA %>%
+  filter(Dest != "AUS") %>% 
+  mutate(Time = floor(CRSDepTime/100)+1) %>% 
+  group_by(Time, UniqueCarrier) %>%
+  summarize(mean = mean(ArrDelay, na.rm=TRUE))%>%
+  filter(mean<100)
+
+ggplot(best_time_airline) +
+  geom_col(aes(x=Time, y=mean)) +
+  facet_wrap(~UniqueCarrier) + 
+  labs(y="Average Arrival Delays (min)", x="Time (hr)") + 
+  theme_bw()
+```
+
+Delay times also change throughout the year. Below is the graph of average arrival delays in each month of 2008 for the 12 most popular destinations (Figure 3), which include DAL, DFW, IAH, PHX, DEN, ORD, HOU, ATL, LAX, JFK, ELP, and LAS. It appears that autumn (September to November) is the best time fly to these places. 
+
+```{r best_month, fig.cap="Average Arrival Delays for Each Month"}
+pop_dest = c("DAL", "DFW", "IAH", "PHX", "DEN", "ORD", 
+             "HOU", "ATL", "LAX", "JFK", "ELP", "LAS")
+
+best_month = ABIA %>%
+  filter(Dest %in% pop_dest) %>%
+  group_by(Month) %>%
+  summarize(avg_delay = mean(ArrDelay, na.rm=TRUE))
+
+ggplot(best_month) +
+  geom_col(aes(x=Month, y=avg_delay)) +
+  scale_x_continuous(breaks=seq(1,12,1)) + 
+  labs(y="Average Arrival Delays (min)") + 
+  theme_bw()
+```
+
+Then, for each month, we again plotted the average delays for each hour for these destinations (Figure 4). The graph conforms with what we found previously, that early hours tend to experience shorter delays than later hours do. 
+
+```{r best_month_time, fig.cap="Average Arrival Delays for Each Month at Different Times of the Day"}
+best_month_time = ABIA %>%
+  filter(Dest %in% pop_dest) %>%
+  mutate(Time = floor(CRSDepTime/100)+1) %>% 
+  group_by(Time, Month) %>%
+  summarize(avg_delay = mean(ArrDelay, na.rm=TRUE))
+
+ggplot(best_month_time) +
+  geom_col(aes(x=Time, y=avg_delay)) +
+  facet_wrap(~Month) +
+  labs(y="Average Arrival Delays (min)",
+       x="Time (hr)") + 
+  theme_bw()
+```
+
+```{r best_month_Dest, fig.cap="Average Arrival Delays for Each Month at the 12 Most Popular Destinations"}
+# best_month_Dest = ABIA %>%
+#   filter(Dest %in% pop_dest) %>%
+#   group_by(Month, Dest) %>%
+#   summarize(avg_delay = mean(ArrDelay, na.rm=TRUE))
+# 
+# ggplot(best_month_Dest) +
+#   geom_col(aes(x=Month, y=avg_delay)) +
+#   facet_wrap(~Dest) +
+#   scale_x_continuous(breaks=seq(1,12,2)) + 
+#   labs(y="Average Arrival Delays (min)") + 
+#   theme_bw()
+```
+
+We have also mapped out the seasons in which the shortest delay time occurs at each destination airport. From the map (Figure 5), airports where spring has minimal delay are concentrated on the east coast; airports where winter has minimal delay are concentrated in the south. The overall pattern is not exactly clear though, but it does seem that the best time to fly to Florida is spring. 
+
+```{r map, fig.cap="MininalAaverage Delay Season for Each Airport"}
+map = ABIA %>%
+  filter(Dest != "AUS") %>%
+  group_by(Month, Dest) %>%
+  summarize(avg_delay = mean(ArrDelay, na.rm=TRUE)) %>%
+  group_by(Dest) %>% 
+  slice(which.min(avg_delay))%>%
+  arrange(Dest)
+
+code = read.csv("airport-codes.csv")
+
+code = code %>%
+  select(iata_code, coordinates) %>%
+  filter(iata_code %in% map$Dest) %>%
+  separate(coordinates, into = c('lat', 'lon'), sep = ',') %>%
+  arrange(iata_code)
+
+map = map %>%
+  cbind(lat=code$lat, lon=code$lon)%>%
+  mutate(season = case_when(Month==3|Month==4|Month==5~'Spring',
+                Month==6|Month==7|Month==8~'Summer',
+                Month==9|Month==10|Month==11~'Fall',
+                Month==12|Month==1|Month==2~'Winter'))
+
+mode(map$lat) = 'numeric'
+mode(map$lon) = 'numeric'
+
+qmplot(lon, lat, data=map,
+       maptype="toner-lite", color=season, size = I(3.5))
+```
+Having examined the best time to fly out of ABIA, we turn to the destination airports themselves. The graph below (Figure 6) shows the destination airports with the longest average delays that were attributed to weather and NAS reasons (which include non-extreme weather conditions, airport operations, heavy traffic volume, and air traffic control), with a minimum cutoff at 10 minutes. We believe these two reasons are idiosyncratic to the airports themselves and can be indications of their certain qualities. The airports that suffer from the longest delays according to the figure include NYC airports, Philadelphia International Airport, and Chicago O'Hare. 
+
+```{r bad_airport, fig.cap="Average Delays Due to Weather and NAS "}
+df = ABIA %>% 
+  select(Dest, ArrDelay, DepDelay, Month, DayOfWeek,
+         CRSDepTime, CarrierDelay, SecurityDelay,
+         WeatherDelay, NASDelay, LateAircraftDelay) %>% 
+  filter(Dest != "AUS") %>%
+  mutate_all(~replace(., is.na(.), 0)) %>% 
+  filter(ArrDelay > 10) %>% 
+  mutate(Delay = NASDelay + WeatherDelay)
+
+delay = df %>% 
+  group_by(Dest) %>% 
+  summarise(mean = mean(Delay, na.rm=T), 
+            max = max(Delay, na.rm=T)) %>% 
+  drop_na() %>% 
+  arrange(desc(mean)) %>% 
+  filter(Dest != "DSM" & Dest != "DTW" & mean > 10)
+
+ggplot(delay) +
+  geom_col(aes(x=fct_reorder(Dest,mean), y=mean)) + 
+  coord_flip() +
+  labs(x = "Destination Airport", 
+       y = "Average Delays (mins)") + 
+  theme_bw()
+
+bad_airports = delay[1:8, "Dest"] %>% 
+  as.list()
+
+bad_airports_idx = which(df$Dest %in% bad_airports$Dest)
+```
+
+We then picked out the 8 airports with the longest delays, and plotted their average delays (that are due to weather and NAS) for each month (Figure 7). Some of these airports, like JFK and IAH have consistent delays throughout the year, while airports such as Baltimore-Washington and Philadelphia have their significant delays occurring only in certain months of the year.
+
+```{r bad_airport_month, fig.cap="Average Delays Due to Weather and NAS for Different Airports"}
+delay_month = df[bad_airports_idx,] %>% 
+  group_by(Month, Dest) %>% 
+  summarise(mean = mean(Delay))
+
+ggplot(delay_month) + 
+  geom_col(aes(x=Month, y=mean)) + 
+  facet_wrap(~Dest) + 
+  theme_bw() + 
+  labs(y = "Average Delays (mins)") + 
+  scale_x_continuous(breaks=seq(2,12,2))
+```
+
+Lastly, we calculated the likelihood of cancellations of flights to different destinations (we restricted our analysis to the airports to which there were at least 30 flights from ABIA), and computed their standard errors. We find that 6 airports (shown in Figure 8) receive a statistically significantly higher likelihood of cancelled flights compared to the baseline cancellation rate that is calculated from all flights leaving Austin. Among these destinations, Lambert-St. Louis International Airport is the worst. (We also examined at the probability of diverted flights but did not find any statistical significance.)
+
+```{r cancellations, fig.cap="Probability of Flight Cancellations for Different Destination Airports"}
+baseline_can = ABIA %>% 
+  select(Cancelled, Dest) %>% 
+  filter(Dest != "AUS") %>% 
+  mutate_all(~replace(., is.na(.), 0))
+
+baseline_can = mean(baseline_can$Cancelled)
+
+clt = ABIA %>% 
+  select(Dest) %>% 
+  filter(Dest != "AUS") %>% 
+  group_by(Dest) %>% 
+  summarise(count = count(Dest)) %>% 
+  filter(count>30)
+
+clt = clt$Dest
+
+cancelled = ABIA %>% 
+  select(Cancelled, Dest) %>% 
+  filter(Dest %in% clt) %>% 
+  group_by(Dest) %>% 
+  summarise(mean = mean(Cancelled), 
+            se = sqrt(mean(Cancelled) * (1-mean(Cancelled))) / sqrt(count(Dest)),
+            t = sqrt(count(Dest)) * (mean(Cancelled)- baseline_can) / sqrt(mean(Cancelled) * (1-mean(Cancelled)))) %>% 
+  filter(t > 1.96)
+
+ggplot(cancelled) +
+  geom_col(aes(x=fct_reorder(Dest, mean, .desc=TRUE), y=mean)) + 
+  geom_hline(yintercept=baseline_can, linetype='dashed', 
+             color='red', alpha=0.5) + 
+  geom_errorbar(aes(x=Dest, ymin=mean-se, ymax=mean+se),
+                width=.2, position=position_dodge(.9)) +
+  labs(x="Destination Airport",
+       y="Probability of Cancellation") + 
+  theme_bw()
+```
+In summary, the best time to fly out of Austin is in the autumn months or during the morning hours (at least to the most popular destinations). Among the popular destinations, JFK, Chicago O'Hare, and George Bush Intercontinental Airport see the longest average delays. Furthermore, Lambert-St. Louis and Chicago O'Hare experience much higher chances of flight cancellations than normal. 
+
+# Problem 2
+## Part a
+```{r 2a}
+height = olympics_top20 %>% 
+  filter(sex == "F" & sport == "Athletics") %>% 
+  select(height)
+
+height_95 = quantile(height$height, probs=0.95)
+```
+The 95th percentile of heights for female competitors across all Athletics events is `r height_95` cm. 
+
+## Part b
+```{r 2b, }
+df = olympics_top20 %>% 
+  filter(sex == "F") %>% 
+  select(height, event)
+
+height_sd = df %>% 
+  group_by(event) %>% 
+  summarise(sd = sd(height)) %>% 
+  arrange(desc(sd)) %>% 
+  head()
+
+height_sd %>% 
+  kable(booktabs = TRUE, digits = 2,
+        col.names = c("Event", "SD"),
+        caption = "Women's Event with Largest Variabilities in Heights") %>%
+  kable_styling(latex_options = "hold_position") %>% 
+  row_spec(0, bold = TRUE)
+```
+Shown in Table 1 are the top 6 women's events with the greatest variability in competitors' heights, measured in standard deviations. 
+
+From the table, `r height_sd[1,1]` has the greatest variability in competitor's heights, with a standard deviation of `r round(height_sd[1,2], 2)`. (If the question is asking "single women", then it is `r height_sd[5,1]` with a standard deviation of `r round(height_sd[5,2], 2)`.)
+
+## Part c
+```{r 2c_mean, fig.cap="Average Age of Olympic Swimmers by Year"}
+df = olympics_top20 %>% 
+  filter(sport == "Swimming") %>% 
+  select(age, year, sex)
+
+mean_both_sex = df %>% 
+  group_by(year) %>% 
+  summarise(mean.age = mean(age))
+
+mean_male = df %>%
+  filter(sex=="M") %>% 
+  group_by(year) %>% 
+  summarise(mean.age = mean(age))
+
+mean_female = df %>%
+  filter(sex=="F") %>% 
+  group_by(year) %>% 
+  summarise(mean.age = mean(age))
+
+ggplot() + 
+  geom_line(data = mean_both_sex, 
+            aes(x = year, y = mean.age, color = "both"),
+            alpha=0.5) + 
+  geom_line(data = mean_male, 
+            aes(x = year, y = mean.age, color = "male"),
+            alpha=0.5) + 
+  geom_line(data = mean_female, 
+            aes(x = year, y = mean.age, color = "female"), 
+            alpha = 0.5) + 
+  labs(x = "Year", y = "Age") + 
+  scale_color_manual(name='', 
+                     values=c('both'='black', 'male'='seagreen',
+                               'female'='red'), 
+                     labels=c('Both','Female','Male')) + 
+  theme_bw()
+```
+The average age of Olympic swimmers was around 18 in the start of the 20th century, with a trend upwards until the 1920s when female swimmers started participating in swimming events. Between 1920s and 1980s, the average ages of swimmers of both genders remain relatively flat. Then beginning in 1980s, the average ages of both male and female swimmers began to rise, and female swimmers are consistently younger than male swimmers on average. 
+
+# Problem 3
+For each trim ("350" and "65 AMG"), the data were first randomly divided into 10 folds (9 of them are used as training sets, and the remaining one a testing set), and KNN regressions were performed 10 times on each data set for each k value ranging from 2 to 100. Root mean-squared errors of each regression model was then computed against the testing set, and an average RMSE value was computed for each k value. These values are plotted below (Figures 10 and 12). 
+
+## 350 AMG
+```{r sclass_350_train_test, fig.cap="RMSE of KNN Model at Various Values of k"}
+sclass_350 = sclass %>% filter(trim == "350")
+
+N = nrow(sclass_350)
+K = 10
+fold_id = rep_len(1:K, N)
+fold_id = sample(fold_id, replace=FALSE) 
+
+maxKNN = 100
+err_save = matrix(0, nrow=K, ncol=maxKNN)
+
+for(i in 1:K) {
+  train_set = which(fold_id != i)
+  y_test = sclass_350$price[-train_set]
+  for(m in 2:maxKNN) {
+    train_model = knnreg(price ~ mileage, 
+                    data=sclass_350[train_set,], 
+                    k = m)
+    yhat_test = predict(train_model,
+                        newdata=sclass_350[-train_set,])
+    err_save[i, m] = mean((y_test - yhat_test)^2)
+  }
+}
+
+err_save = err_save %>% 
+  colMeans() %>% 
+  sqrt()
+
+err_save = data.frame(rmse = err_save[-1], k = seq(2,100,1))
+
+# names(err) = sub('^V', '', names(err))
+
+ggplot(err_save) + 
+  geom_point(aes(y=rmse, x=k)) + 
+  theme_bw() + 
+  labs(x = "k", y = "RMSE")
+```
+Based on the Figure 10, it appears that the optimal (least) RMSE value occurs around a k value of 16. Using this k value, a KNN regression was again performed on the entire sub-data set, and the predicted values along with the raw data points are plotted below (Figure 11). 
+
+```{r sclass_350_fit, fig.cap="Prediction of KNN Model with k=16"}
+model_opt_k = knnreg(price ~ mileage, data=sclass_350, 
+                    k = 16)
+
+yhat = predict(model_opt_k, newdata=sclass_350)
+
+sclass_350 = cbind(sclass_350, yhat)
+
+ggplot(sclass_350) + 
+  geom_point(aes(x=mileage, y=price), alpha=0.2) + 
+  geom_line(aes(x=mileage, y=yhat)) + 
+  theme_bw() + 
+  labs(x = "Mileage", y = "Price")
+```
+
+## 65 AMG
+```{r sclass_65_train_test, fig.cap="RMSE of KNN Model at Various Values of k"}
+sclass_65 = sclass %>% filter(trim == "65 AMG")
+
+N = nrow(sclass_65)
+K = 10
+fold_id = rep_len(1:K, N)
+fold_id = sample(fold_id, replace=FALSE) 
+
+maxKNN = 100
+err_save = matrix(0, nrow=K, ncol=maxKNN)
+
+for(i in 1:K) {
+  train_set = which(fold_id != i)
+  y_test = sclass_65$price[-train_set]
+  for(m in 2:maxKNN) {
+    train_model = knnreg(price ~ mileage, 
+                    data=sclass_65[train_set,], 
+                    k = m)
+    yhat_test = predict(train_model,
+                        newdata=sclass_65[-train_set,])
+    err_save[i, m] = mean((y_test - yhat_test)^2)
+  }
+}
+
+err_save = err_save %>% 
+  colMeans() %>% 
+  sqrt()
+
+err_save = data.frame(rmse = err_save[-1], k = seq(2,100,1))
+
+# names(err) = sub('^V', '', names(err))
+
+ggplot(err_save) + 
+  geom_point(aes(y=rmse, x=k)) + 
+  theme_bw() + 
+  labs(x = "k", y = "RMSE")
+```
+Based on Figure 12, it appears that the optimal (least) RMSE value occurs around a k value of 10. Using this k value, a KNN regression was again performed on the entire sub-data set, and the predicted values along with the raw data points are plotted below (Figure 13). 
+
+```{r sclass_65_fit, fig.cap="Prediction of KNN Model with k=10"}
+model_opt_k = knnreg(price ~ mileage, data=sclass_65, 
+                    k = 10)
+
+yhat = predict(model_opt_k, newdata=sclass_65)
+
+sclass_65 = cbind(sclass_65, yhat)
+
+ggplot(sclass_65) + 
+  geom_point(aes(x=mileage, y=price), alpha=0.2) + 
+  geom_line(aes(x=mileage, y=yhat)) + 
+  theme_bw() + 
+  labs(x = "Mileage", y = "Price")
+```
+The optimal k value is larger for the "350" trim. This is likely because there are more data point in this trim, and the points in "350" trim are closer to each other, while those in "65 AMG" are more scattered; so, KNN can utilize more neighboring points to make predictions for the "350" trim without sacrificing accuracy. However, despite these differences, the optimal k values are still fairly close to each other; this is perhaps because of the clustering in "350" trim's distribution. 
