@@ -1,7 +1,8 @@
 ---
 title: "**ECO395M: PS1**"
 author: "Yuhui Gu and Zihao Yin"
-output: pdf_document
+output: md_document
+always_allow_html: yes
 ---
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = FALSE, message = FALSE,
