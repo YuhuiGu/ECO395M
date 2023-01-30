@@ -1,3 +1,7 @@
+---
+title: "**ECO395M: PS1**"
+author: "Yuhui Gu and Zihao Yin"
+---
 # Problem 1
 
 Using this data set which contains information about every commercial
@@ -60,9 +64,9 @@ airports where winter has minimal delay are concentrated in the south.
 The overall pattern is not exactly clear though, but it does seem that
 the best time to fly to Florida is spring.
 
-<img src="PS1_files/figure-markdown_strict/map-1.png" alt="MininalAaverage Delay Season for Each Airport" width=".8\textwidth" />
+<img src="PS1_files/figure-markdown_strict/map-1.png" alt="Mininal Aaverage Delay Season for Each Airport" width=".8\textwidth" />
 <p class="caption">
-MininalAaverage Delay Season for Each Airport
+Mininal Aaverage Delay Season for Each Airport
 </p>
 
 Having examined the best time to fly out of ABIA, we turn to the

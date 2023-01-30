@@ -110,7 +110,7 @@ ggplot(best_month_time) +
 
 We have also mapped out the seasons in which the shortest delay time occurs at each destination airport. From the map (Figure 5), airports where spring has minimal delay are concentrated on the east coast; airports where winter has minimal delay are concentrated in the south. The overall pattern is not exactly clear though, but it does seem that the best time to fly to Florida is spring. 
 
-```{r map, fig.cap="MininalAaverage Delay Season for Each Airport"}
+```{r map, fig.cap="Mininal Aaverage Delay Season for Each Airport"}
 map = ABIA %>%
   filter(Dest != "AUS") %>%
   group_by(Month, Dest) %>%
