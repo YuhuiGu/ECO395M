@@ -1,0 +1,19 @@
+---
+title: "**ECO395M: PS2**"
+author: "Yuhui Gu and Zihao Yin"
+output: md_document
+always_allow_html: yes
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE,
+                      out.width = ".8\\textwidth", 
+                      fig.align = "center",
+                      fig.pos = "H")
+library(tidyverse)
+library(mosaic)
+library(caret)
+library(ggmap)
+library(knitr)
+library(kableExtra)
+```
+
