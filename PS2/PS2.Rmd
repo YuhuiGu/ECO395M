@@ -1,19 +1,303 @@
 ---
 title: "**ECO395M: PS2**"
 author: "Yuhui Gu and Zihao Yin"
-output: md_document
-always_allow_html: yes
+output: pdf_document
+header-includes: 
+  \linespread{1.25}
+  \usepackage{breqn}
 ---
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = FALSE, message = FALSE,
+knitr::opts_chunk$set(echo = F, message = F, warning = F,
                       out.width = ".8\\textwidth", 
                       fig.align = "center",
                       fig.pos = "H")
 library(tidyverse)
 library(mosaic)
 library(caret)
-library(ggmap)
 library(knitr)
 library(kableExtra)
+library(rsample)
+library(modelr)
+library(stargazer)
 ```
 
+# Problem 1
+```{r 1_lm}
+data(SaratogaHouses)
+
+# K-fold
+N = nrow(SaratogaHouses)
+K = 10
+fold_id = rep_len(1:K, N)
+fold_id = sample(fold_id, replace=FALSE)
+
+# Bench Model
+error_bench = matrix(0, nrow=K, ncol=1)
+for(i in 1:K) {
+  train_set = which(fold_id != i)
+  lm_bench = lm(price ~ . - pctCollege - sewer - waterfront 
+                - landValue - newConstruction,
+                data = SaratogaHouses[train_set,])
+  error_bench[i,1] = rmse(lm_bench, SaratogaHouses[-train_set,])
+}  
+error_bench = colMeans(error_bench)  # mean RMSE across 10 folds
+
+# Our Model
+SaratogaHouses = SaratogaHouses %>% 
+  mutate("area.room" = livingArea/rooms)
+
+error_new = matrix(0, nrow=K, ncol=1)
+for(i in 1:K) {
+  train_set = which(fold_id != i)
+  lm_new = lm(price ~ . + poly(rooms, 3) + poly(age, 3) 
+              + area.room + fuel:heating + heating:fireplaces 
+              + fuel:centralAir + lotSize:age
+              + landValue:newConstruction,
+              data = SaratogaHouses[train_set,])
+  error_new[i,1] = rmse(lm_new, SaratogaHouses[-train_set,])
+}  
+error_new = colMeans(error_new)  # mean RMSE across 10 folds
+
+# Table Output
+cbind(error_bench, error_new) %>% 
+  as.data.frame() %>% 
+  kable(booktabs = TRUE, digits = 2,
+        col.names = c("Benchmark", "New Model"),
+        caption = "Mean RMSE's of Two Models") %>%
+  kable_styling(latex_options = "hold_position")
+```
+With the goal of predicting house prices in Saratoga, we have constructed a linear model and a k-nearest neighbours (KNN) model based on the available dataset. Our linear model is an improvement to the model shown in class, and the performance of the models are measured by the mean out-of-sample root mean squared errors (RMSE) using 10-fold cross validation. Our improved linear model includes every independent variables present in the dataset and numerous interaction and polynomial terms. (More details of the model are shown in **Appendix A**). The mean out-of-sample RMSEs of the linear models --- the benchmark model shown in class and our improved model --- are displayed in Table 1. 
+
+```{r 1_KNN}
+# Dummy Variables
+for (col in c("heating", "fuel", "sewer")) {
+  for (level in levels(SaratogaHouses[[col]])) {
+    SaratogaHouses[[paste0(col, "_", level)]] = ifelse(SaratogaHouses[[col]] == level, 1, 0)
+  }
+}
+for (col in c("waterfront", "newConstruction", "centralAir")) {
+  SaratogaHouses[[paste0(col, "_dummy")]] = ifelse(SaratogaHouses[[col]] == "Yes", 1, 0)
+}
+
+# KNN Regressors
+knn_y = SaratogaHouses %>% select(price)
+knn_vars = SaratogaHouses %>% 
+  select(-c(1,11:16)) %>% 
+  scale() %>% 
+  as.data.frame() %>% 
+  cbind(knn_y,.)
+names(knn_vars) = gsub(" |/", "_", names(knn_vars))
+
+# KNN
+N = nrow(knn_vars)
+K = 10
+fold_id = rep_len(1:K, N)
+fold_id = sample(fold_id, replace=FALSE) 
+maxKNN = 50
+err_KNN = matrix(0, nrow=K, ncol=maxKNN)
+for(i in 1:K) {
+  train_set = which(fold_id != i)
+  for(m in 2:maxKNN) {
+    train_model = knnreg(price ~ ., 
+                         data = knn_vars[train_set,], k = m)
+    err_KNN[i, m] = rmse(train_model, knn_vars[-train_set,])
+  }
+}
+err_KNN = colMeans(err_KNN)
+err_KNN = data.frame(rmse = err_KNN[-1], k = seq(2,50,1))
+best_KNN = err_KNN[err_KNN$rmse == min(err_KNN$rmse),]
+```
+Moreover, we have constructed a KNN model using standardised independent variables (more details of the model are shown in **Appendix A**), and the mean RMSE's using 10-fold cross validation at each level of $k$ are plotted in Figure 1. Based on the figure, we find that the best performance occurs at a $k$ of `r best_KNN$k`  with a mean RMSE of around `r round(best_KNN$rmse,-2)`. 
+
+Therefore, the improved linear model outperforms both the original benchmark and the KNN model. Although the linear model still retains a substantial error, it is the best model we have at the moment. 
+
+```{r 1_KNN_plot, fig.cap="RMSE of KNN Regression"}
+# RMSE Plot
+ggplot(err_KNN) + 
+  geom_point(aes(y=rmse, x=k)) + 
+  theme_classic() + 
+  labs(x = "k", y = "RMSE")
+```
+
+# Problem 2
+```{r 2_plot, fig.cap="Probability of Default by Borrower's Credit History"}
+rm(list=ls())
+german = read.csv("german_credit.csv")
+
+german_prob = german %>% 
+  select(history, Default) %>%
+  mutate(history = factor(history)) %>% 
+  group_by(history) %>% 
+  summarize(prob = mean(Default))
+
+ggplot(german_prob)+
+  geom_col(aes(x=history, y=prob))+
+  labs(x="Credit History", y="Default Probability") + 
+  theme_classic()
+```
+The default probabilities for each credit history in our sample --- good, poor, and terrible --- are calculated as simple ratios of number of defaults to the total number of borrowers. The probabilities are plotted in Figure 2. We found that borrowers with better credit history have a higher likelihood of default. This is because there are relatively more borrowers with good history in the default subsample.
+
+We then performed a logistic regression by controlling other characteristics of the borrowers, and the regression coefficients are shown in Table 2. Again, we find that borrowers with better credit history have a higher likelihood of default, as the coefficients of $historypoor$ and $historyterrible$ are both negative. 
+
+```{r 2_logit, results='asis'}
+logit = glm(Default ~ duration + amount + installment + age 
+            + history + purpose + foreign,
+            data = german, family = 'binomial')
+
+stargazer(logit, header = F, single.row = T,
+          table.placement = 'H',
+          title="Coefficients of Logit Model")
+```
+In a case-control study, there are "matching" variables and "exposure" variables. The matching variables should be similar across the default and non-default sets, and the exposure variable should not be controlled, so that the relation between the outcome and exposure variable can be uncovered. It is likely that the exposure variable is credit history in this study, while other features are used for matching. Given that there are very few borrowers with good credit history in the non-default set, it is likely that the borrowers with good credit history in the default set are similar in characteristics, except in credit history itself, to their bad history counterparts, meaning that they are actually more likely to default, and they were granted a loan just on the basis of their good credit history. Therefore, the dataset has an inherent selection bias. 
+
+In light of our finding, this dataset is not appropriate for building a predictive model of default because of the bias inherent in the sample. We would recommend the bank use a larger dataset that more accurately captures the characteristics of all borrowers to build predictive models. 
+
+# Problem 3
+```{r 3_models}
+rm(list=ls())
+hotel = read.csv("hotels_dev.csv")
+
+# 10-fold
+N_h = nrow(hotel)
+K = 10
+fold_id_h = rep_len(1:K, N_h)
+fold_id_h = sample(fold_id_h, replace=FALSE) 
+
+# RMSE Vectors Init. 
+error_1 = matrix(0, nrow=K, ncol=1)
+error_2 = matrix(0, nrow=K, ncol=1)
+
+# Baseline 1 & 2
+for(i in 1:K) {
+  train_set = which(fold_id_h != i)
+  lm_1 = lm(children ~ market_segment + adults + customer_type 
+            + is_repeated_guest, data=hotel[train_set,])
+  lm_2 = lm(children ~ . - arrival_date, data=hotel[train_set,])
+  error_1[i,1] = rmse(lm_1, hotel[-train_set,])
+  error_2[i,1] = rmse(lm_2, hotel[-train_set,])
+}
+error_1 = colMeans(error_1)  
+error_2 = colMeans(error_2)
+
+# Our LM
+hotel = hotel %>% 
+  mutate(arrival_date = as.Date(arrival_date)) %>% 
+  mutate(year = as.numeric(format(arrival_date, "%y")),
+         month = as.numeric(format(arrival_date, "%m")),
+         day = as.numeric(format(arrival_date, "%d"))) %>% 
+  mutate(adults = factor(adults))
+
+error_best = matrix(0, nrow=K, ncol=1)
+for(i in 1:K) {
+  train_set = which(fold_id_h != i)
+  lm_best = lm(children ~ . - arrival_date - month - year
+               + factor(month)*day + factor(month)*factor(year)
+               + adults:(total_of_special_requests + meal + reserved_room_type + stays_in_weekend_nights + stays_in_week_nights + is_repeated_guest + average_daily_rate) 
+               + reserved_room_type:(required_car_parking_spaces + meal + stays_in_weekend_nights + stays_in_week_nights + is_repeated_guest + average_daily_rate),
+               data = hotel[train_set,])
+  error_best[i,1] = rmse(lm_best, hotel[-train_set,])
+}  
+error_best = colMeans(error_best)
+
+# Table Output
+cbind(error_1, error_2, error_best) %>% 
+  as.data.frame() %>% 
+  kable(booktabs = TRUE, digits = 3,
+        col.names = c("Benchmark 1", "Benchmark 2", "Our Model"),
+        caption = "Mean RMSE's of Three Models") %>%
+  kable_styling(latex_options = "hold_position") 
+
+pctg = (error_2 - error_best)/error_2*100
+```
+
+Here we compare out-of-sample performances of three different models using 10-fold cross validation, like we did in Problem 1. The RMSE's of the models are shown in Table 3. 
+
+Our linear model includes every covariates that are present in the second baseline model. The $arrival\_date$ variable is instead split into $year$, $month$, and $day$, and all three are included in our model, with $year$ and $month$ as categorical variables. Additionally, each level in $adults$ is included as a dummy variable in the model. We also included numerous interaction terms among the covariates, and more details on this are shown in **Appendix B**. Despite the drastic increase in complexity, the RMSE of this model is only `r round(pctg,1)`\% better than the second benchmark model, much to our dismay. 
+
+Now, we will validate our model using a new dataset. We predict whether each booking has children using a threshold $t \in (0,\,1)$: if the predicted value of the model is less than $t$, we classify the booking as having no children, and vice versa. At each threshold, we construct a confusion matrix of our classification result, with which we calculate the true positive rate (TPR) and the false positive rate (FPR). The ROC curve of our model is shown below (Figure 3); the top-right region of the curve corresponds to a low $t$, while the bottom-left corresponds to a high $t$. 
+
+```{r validation_1, fig.cap="ROC of Our Best Linear Model"}
+hotel_val = read.csv("hotels_val.csv")
+
+# Same Data Wrangling
+hotel_val = hotel_val %>% 
+  mutate(arrival_date = as.Date(arrival_date)) %>% 
+  mutate(year = as.numeric(format(arrival_date, "%y")),
+         month = as.numeric(format(arrival_date, "%m")),
+         day = as.numeric(format(arrival_date, "%d"))) %>% 
+  mutate(adults = factor(adults))
+
+yhat_val = predict(lm_best, newdata=hotel_val)
+hotel_val = cbind(hotel_val, yhat_val)
+
+# ROC
+ROC = matrix(0, ncol=2, nrow=99)
+i = 1
+for (t in seq(0.01, 0.99, 0.01)){
+  hotel_val = hotel_val %>%
+    mutate(yhat_class = ifelse(yhat_val > t, 1, 0))
+  table = table(hotel_val$yhat_class, hotel_val$children)
+  ROC[i,1] = table[2,2]/(table[1,2] + table[2,2])
+  ROC[i,2] = table[2,1]/(table[1,1] + table[2,1])
+  i = i+1
+}
+
+# ROC Plot
+ggplot(data.frame(ROC)) +
+  geom_line(aes(x = X2, y = X1)) +
+  labs(x = "FPR", y = "TPR") + 
+  theme_classic()
+```
+Furthermore, we randomly divided the validation set into 20 folds. For each fold containing around 250 bookings, we predicted the probabilities that a booking has children, and summed up these probabilities to obtain an estimate for the total expected number of bookings with children within a fold. The actual number of bookings with children and our estimated number for each fold are plotted below as a scatter plot (Figure 4). 
+
+```{r validation_2}
+N_v = nrow(hotel_val)
+K_v = 20
+fold_id_v = rep_len(1:K_v, N_v)
+fold_id_v = sample(fold_id_v, replace=FALSE) 
+
+final_pred = matrix(0, nrow=20, ncol=1)
+final_actual = matrix(0, nrow=20, ncol=1)
+for(i in 1:K_v) {
+  train_set = which(fold_id_v == i)
+  yhat = predict(lm_best, newdata=hotel_val[train_set,])
+  final_actual[i,1] = sum(hotel_val[train_set,]$children)
+  final_pred[i,1] = sum(yhat)
+}  
+final_err = final_actual - final_pred
+final = cbind(final_actual, final_pred) %>% as.data.frame()
+
+slope = coef(lm(V1~V2, data=final))[2]
+```
+The scatter plot of a perfect prediction would have every point falling on the diagonal line. So, based on the figure, we can see our prediction is quite poor, with the slope of the regression line being `r round(slope, 2)`. Furthermore, the correlation between the actual values and our predictions is `r round(cor(final$V1, final$V2), 2)`. 
+
+```{r validation_2_plot, fig.cap="Performance of Our Linear Model"}
+ggplot(final, aes(y = V1, x = V2)) +
+  geom_point() +
+  geom_smooth(method='lm', color='black') +
+  labs(y = "Actual Number of Bookings",
+       x = "Predicted Number of Bookings") +
+  theme_classic() + 
+  coord_fixed(ratio = 1)
+```
+\newpage
+
+# Appendix A
+## Linear Model
+We have included every independent variable in the dataset in our linear model. We have also created a new regressor, $area.room$, that is the quotient of total living area to the number of rooms of a house. Other regressors that we have included are shown in the equation below, where $everything$ denotes every column except for $price$ in the original dataset: 
+\begin{dmath*}
+price = \beta_0 + \delta\cdot everything + \beta_1 age^2 + \beta_2 age^3 + \beta_3 rooms^2+ \beta_4 rooms^3 \\
++ \gamma_1 fuel \times heating + \gamma_2 heating\times fireplaces + \gamma_3 fuel\times \gamma_4 centralAir \\+ \gamma_5 lotSize\times age + \gamma_6 landValue\times newConstruction + u
+\end{dmath*}
+The reason behind the inclusion of most of these regressors are purely empirical.
+
+## KNN
+In our KNN model, we have included every independent variables of the dataset and $area.room$. All categorical variables -- $fuel$, $heating$, $sewer$ -- are replaced by appropriate new dummy variables. All variables, including the dummy variables, are then standardised to ensure comparable weightings among the variables. 
+
+# Appendix B
+Our model can be expressed as follows
+\begin{dmath*}
+children = \beta_0 + \beta\cdot everything + \gamma_1 year \times month + \gamma_2 day \times month \\
++ \delta_1 adults \times total\_of\_special\_requests + \delta_2 adults \times reserved\_room\_type \\ + \delta_3 adults \times meal + \delta_4 adults \times stays\_in\_weekend\_nights \\ + \delta_5 adults \times stays\_in\_week\_nights \\ + \delta_6 adults \times is\_repeated\_guest + \delta_7 adults \times  average\_daily\_rate \\ + \phi_1 reserved\_room\_type \times required\_car\_parking\_spaces \\ + \phi_2 reserved\_room\_type \times meal \\+ \phi_3 reserved\_room\_type \times stays\_in\_weekend\_nights + \phi_4 reserved\_room\_type \times stays\_in\_week\_nights \\ + \phi_5 reserved\_room\_type \times is\_repeated\_guest \\ + \phi_6 reserved\_room\_type \times  average\_daily\_rate + u
+\end{dmath*}
+where $everything$ includes all covariates in the second baseline model, $year$, $month$, and $day$, and with $adults$ as dummy variables. 
